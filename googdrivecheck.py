@@ -83,16 +83,14 @@ class FolderTracker():
             print("more than one parent")
         is_a_folder = is_folder(file)
 
-        # two cases - folder or not folder
         if is_a_folder:
             # Record the folder info
             folder = self._get_folder_or_initialize(id)
             folder.set_name_and_parent(name, parent)
 
-        else:
-            # It's not a folder, so we need to log this file as a child
-            enclosing_folder = self._get_folder_or_initialize(parent)
-            enclosing_folder.increment_child_count()
+        # Log this file in its enclosing folder, too
+        enclosing_folder = self._get_folder_or_initialize(parent)
+        enclosing_folder.increment_child_count()
 
 
     def get_full_path(self, folder: Folder):
@@ -110,7 +108,7 @@ class FolderTracker():
             if folder.name == "":
                 print("this folder was never seen. Setting name to ??")
                 folder.set_full_path("??")
-            return folder.name
+            return folder.full_path
 
         # Otherwise, we go fetch the parent
         print("looking up the parent")
@@ -215,16 +213,23 @@ if __name__ == "__main__":
     total = 0
     # Note: already verified this does not have duplicates
     #todo: make sure owner is josh, not in trash
-    query = {'maxResults': 1000, 'q': "'1v_NC1Q2bla71bnfJ2rCl7HySPvubu1e5' in parents"}
-    simple_query = {'maxResults': 1000}
-    for file_list in drive.ListFile(query):
-        pp(file_list)
-        total += len(file_list)
-        print(total, flush=True)
-        for f in file_list:
-            all_file_set.append(f)
-            all_folders.log_item(f)
-            check_file_sharing(f)
+    todo_stack = ["1v_NC1Q2bla71bnfJ2rCl7HySPvubu1e5"]
+
+    while len(todo_stack) > 0:
+        next_parent = todo_stack.pop()
+        q_string = "'" + next_parent + "'" + " in parents"
+        query = {'maxResults': 1000, 'q': q_string}
+        #simple_query = {'maxResults': 1000}
+        for file_list in drive.ListFile(query):
+            pp(file_list)
+            total += len(file_list)
+            print(total, flush=True)
+            for f in file_list:
+                all_file_set.append(f)
+                all_folders.log_item(f)
+                check_file_sharing(f)
+                if is_folder(f):
+                    todo_stack.append(f['id'])
 
     print(total)
     all_folders.populate_all_paths()
