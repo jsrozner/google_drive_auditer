@@ -1,23 +1,26 @@
-from pydrive.auth import GoogleAuth
-from pydrive.drive import GoogleDrive
-from pydrive.files import GoogleDriveFile
-
 from pprint import pprint as pp
 from typing import List
-
 import pickle
 
-intense_debug = True
+from pydrive.auth import GoogleAuth
+from pydrive.drive import GoogleDrive
 
+# Todo
+intense_debug = False
+debug = False
+
+# Todo
+# Drive defines "My Drive" as root, but backed up computers are not captured.
 rootdirs = ["My Drive", "My MacBook Air"]
 orphan_prefix = "0_orphan"
 
 # Util functions
 def is_folder(file):
     return file['mimeType'] == "application/vnd.google-apps.folder"
-
 def is_root_folder(file):
     return file['title'] in rootdirs and len(file['parents']) == 0
+def print_file_note(description_string, file):
+    print("file_note: " + description_string + ("\n title: %s\t id:%s" % (file['title'], file['id'])))
 
 # Fetches the first parent's ID.
 # Returns None if no parent
@@ -32,7 +35,7 @@ def get_parent(file):
 
     return parent_array[0]['id']
 
-
+# Simple class to initialize a dictionary of the properties we want to track
 class FileProperties:
     @classmethod
     def get_default_properties(cls):
@@ -46,16 +49,23 @@ class FileProperties:
             "has_more_than_one_permission" : False,
             "has_non_user_permission" : False,
             "has_link_sharing" : False
-
         }
         return default_dict
 
+# A file that has a property we care about. Files without interesting properties are not tracked
+# After being initialized, everything can be safely accessed. Generally set once and then read upon output
 class TrackedFile:
     def __init__(self, file, properties_dictionary: dict):
         self.file = file
         self.props = properties_dictionary
+        self.non_user_owners = []
 
-        if properties_dictionary['shared']:
+        if properties_dictionary['non_auth_user_file']:
+            self.non_user_owners = list(x['displayName'] for x in file['owners'])
+
+        # Metadata fetch is expensive, so
+        # Only fetch sharing for files owned by us (if not owned by us, of course it's shared!) and that are shared
+        if not properties_dictionary['non_auth_user_file'] and properties_dictionary['shared']:
             self._fetch_sharing_metadata()
 
     def __repr__(self):
@@ -64,37 +74,54 @@ class TrackedFile:
     def _fetch_sharing_metadata(self):
         file = self.file
         is_shared = self.props['shared']
-        file.FetchMetadata(fetch_all=True)
+
+        # Some magic in case fetching fails
+        fetch_success = False
+        fetch_try_count = 0
+        while not fetch_success and fetch_try_count < 5:
+            try:
+                file.FetchMetadata(fetch_all=True)
+                fetch_success = True
+                if fetch_try_count > 0:
+                    print("fetch success after %d tries" % fetch_try_count)
+                break
+            except(Exception):
+                if fetch_try_count == 0:
+                    print("error fetching metadata for title: %s\t id: %s" % (file['title'], file['id']))
+                    print(str(Exception))
+                fetch_try_count += 1
+
+        # Fail early if all fetches failed
+        if not fetch_success:
+            print("fetches failed %d times. Abandoning" % fetch_try_count)
+            return
 
         has_more_than_one_permission = False   # This is not particularly useful
         has_non_user_permission = False        # This in general will match link_sharing, except in rare cases
         has_link_sharing = False
 
-        try:
-            if len(file['permissions']) > 1:
-                print("more than one permission ID")
-                self.props['has_more_than_one_permission'] = True
+        if len(file['permissions']) > 1:
+            self.props['has_more_than_one_permission'] = True
 
-            for permission in file['permissions']:
-                permission_type = permission['type']
-                if permission_type != "user":
-                    print("non user permission type: %s" % permission_type)
-                    self.props['has_non_user_permission'] = True
-                    if permission_type == "anyone":
-                        print("link sharing enabled")
-                        self.props['has_link_sharing'] = True
+        permission_type_list = \
+            list([[perm['type'],perm.get('emailAddress')] for perm in file['permissions'] if perm['type'] != "user"])
+        if "anyone" in permission_type_list:
+            self.props['has_link_sharing'] = True
 
-        except:
-            pp(file)
+        # todo: prettier way?
+        for permission in permission_type_list:
+            if permission[0] not in ['anyone']:
+                print_file_note("non user or anyone permission type", file)
+                pp(permission_type_list)
+                self.props['has_non_user_permission'] = True
+                break
 
-        # Some verifications:
+        # Some verifications based on our expectations of how sharing works.
         if has_non_user_permission:
             assert(has_more_than_one_permission and is_shared)
-
         # Check that it's shared if any of the three conditions are met
         if has_more_than_one_permission or has_non_user_permission or has_link_sharing:
             assert is_shared
-
         # If link sharing, then it has multiple permissions and one is non sharing
         if has_link_sharing:
             assert(has_more_than_one_permission and has_non_user_permission and is_shared)
@@ -102,9 +129,9 @@ class TrackedFile:
 # Represents an individual folder (a file type) - holds
 class Folder:
     def __init__(self, file_id, parent=None, name=""):
-        # These two must always be set
+        # These two are always set and safe to read
         self.id = file_id
-        self.num_children = 0
+        self.num_direct_children = 0
 
         # These may be set later
         self.name = name
@@ -137,9 +164,8 @@ class Folder:
         if is_root: self.is_root = True
         else: self.is_orphan = True
 
-
     def increment_child_count(self):
-        self.num_children += 1
+        self.num_direct_children += 1
 
     def add_child(self, child):
         self.children.append(child)
@@ -258,7 +284,7 @@ class FolderTracker:
         folder.set_full_path(full_path)
         return full_path
 
-
+    # Postprocessing: recursively fill the paths for all folders
     def populate_all_paths(self):
         for folder in self.data.values():
             if folder.full_path is None:
@@ -285,7 +311,6 @@ def check_file_sharing(file):
 
     if file['shared']:
         properties_dict['shared'] = True
-        print("file is shared")
 
     if "photos" in file["spaces"]:
         properties_dict['spaces_photo'] = True
@@ -294,14 +319,16 @@ def check_file_sharing(file):
 
     if file['labels']['trashed']:
         properties_dict['trashed'] = True
+        print_file_note("file is trashed", file)
 
     if len(file['owners']) > 1:
         properties_dict['multi_owners'] = True
+        print_file_note("file has multi owners", file)
 
     if not "Josh Rozner" in file['ownerNames']:
         properties_dict['non_auth_user_file'] = True
 
-    if any(properties_dict):
+    if True in properties_dict.values():
         tracked_files[file_id] = TrackedFile(file, properties_dict)
 
 def run_with_recursive_look_up(starting_id):
@@ -354,11 +381,11 @@ if __name__ == "__main__":
     all_file_set = []       # Only for intense debugging; not generally used
 
     #todo: make sure owner is josh, not in trash
-    # Note: already verified this does not have duplicates
+    # todo Note: already verified this does not have duplicates
 
     # ******* This is the main run *********
-    run_with_recursive_look_up("0B4aSdoErkE3vTHRTdzRzOTBIR3M") # "active"
-    #run_with_query()
+    #run_with_recursive_look_up("0B4aSdoErkE3vTHRTdzRzOTBIR3M") # "active"
+    run_with_query()
 
     # Post processing
     all_folders.populate_all_paths()
@@ -370,15 +397,6 @@ if __name__ == "__main__":
     should_write = True
     if should_write:
         pickle_file = open("pickleoutput.db", "wb")
-        """pickle.dump(sharing_set, pickle_file)
-        pickle.dump(not_owned_by_me_set, pickle_file)
-        pickle.dump(trash_set, pickle_file)
-        pickle.dump(more_than_one_owner_set, pickle_file)
-        pickle.dump(spaces_photos_set, pickle_file)
-        pickle.dump(spaces_app_data_folder_set, pickle_file)"""
         pickle.dump(all_folders, pickle_file)
         pickle.dump(tracked_files, pickle_file)
         pickle_file.close()
-
-
-    # todo: see where all the massive file set is hidden

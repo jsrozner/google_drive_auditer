@@ -12,7 +12,7 @@ def get_all_children_count(folder: Folder):
     # Otherwise, iterate through the children
     for f in folder.children:
         folder.all_children_count += get_all_children_count(f)
-    return folder.all_children_count + folder.num_children
+    return folder.all_children_count + folder.num_direct_children
 
 def print_folders(folders: List[Folder]):
     print("** Printing folders:")
