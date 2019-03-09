@@ -1,6 +1,7 @@
 from __future__ import annotations
 from pprint import pprint as pp
-from typing import List, Optional
+from typing import Dict, List, Optional
+import csv
 import pickle
 
 from pydrive.auth import GoogleAuth
@@ -68,10 +69,11 @@ class FileProperties:
 # A file that has a property we care about. Files without interesting properties are not tracked
 # After being initialized, everything can be safely accessed. Generally set once and then read upon output
 class TrackedFile:
-    def __init__(self, file, properties_dictionary: dict):
+    def __init__(self, file, properties_dictionary: dict, parent: 'Folder'):
         self.file = file
         self.props = properties_dictionary
         self.non_user_owners = []
+        self.parent = parent
 
         if properties_dictionary['non_auth_user_file']:
             self.non_user_owners = list(x['displayName'] for x in file['owners'])
@@ -83,6 +85,16 @@ class TrackedFile:
 
     def __repr__(self):
         return self.file['title'] + "\n" + self.props.__repr__()
+
+    def tracked_file_csv_info(self):
+        output_dict = self.props.copy()
+        output_dict['name'] = self.file['title']
+        output_dict['id'] = self.file['id']
+        output_dict['url'] = self.file['alternateLink']
+        output_dict['fullpath'] = self.parent.full_path
+        output_dict['non_user_owners'] = self.non_user_owners
+        output_dict['is_folder'] = is_folder(self.file)
+        return output_dict
 
     def _fetch_sharing_metadata(self):
         file = self.file
@@ -168,7 +180,7 @@ class Folder:
         self._depth = -1
 
     # Populates all fields for the folder.
-    def populate_fields_from_file(self, file, parent):
+    def populate_fields_from_file(self, file, parent: 'Folder'):
         if self._seen:
             raise Exception("Fields have already been populated once")
         if self._metadata_lookup_failed:
@@ -328,6 +340,8 @@ class FolderTracker:
             if parent is not None:
                 parent_folder.child_folders.append(folder)
 
+        check_file(file, parent_folder)
+
     # Postprocessing: recursively fill the paths for all folders
     def populate_all_paths(self):
         for folder in self.data.values():
@@ -348,7 +362,7 @@ def print_set(set_name, file_set: List):
     pp([x['fullpath'] for x in file_set])
 
 
-def check_file_sharing(file):
+def check_file(file, parent: Folder):
     file_id = file['id']
     properties_dict = FileProperties.get_default_properties()
 
@@ -372,31 +386,30 @@ def check_file_sharing(file):
         properties_dict['non_auth_user_file'] = True
 
     if True in properties_dict.values():
-        tracked_files[file_id] = TrackedFile(file, properties_dict)
+        tracked_files[file_id] = TrackedFile(file, properties_dict, parent)
 
 def run_with_recursive_look_up(starting_id):
     #todo_stack = [""]
     todo_stack = [starting_id]
-    total_files = 0
+    total_all_files = 0
     total_folders = 0
     while len(todo_stack) > 0:
         next_parent = todo_stack.pop()
         q_string = "'" + next_parent + "'" + " in parents and trashed=false"
         query = {'maxResults': 1000, 'q': q_string}
         for file_list in drive.ListFile(query):
-            total_files += len(file_list)
-            print(total_files)
+            total_all_files += len(file_list)
+            print(total_all_files)
             for f in file_list:
                 if intense_debug:
                     all_file_set.append(f)
                 all_folders.log_item(f)
-                check_file_sharing(f)
                 if is_folder(f):
                     todo_stack.append(f['id'])
                     total_folders += 1
 
-    print("Parsed %d files\t %d folders" % total_all_files, total_folders)
-    return total_files, total_folders
+    print("Parsed %d files\t %d folders" % (total_all_files, total_folders))
+    return total_all_files, total_folders
 
 def run_with_query(query=""):
     if query == "":
@@ -411,9 +424,8 @@ def run_with_query(query=""):
         for f in file_list:
             if is_folder(f): total_folders += 1
             all_folders.log_item(f)
-            check_file_sharing(f)
 
-    print("Parsed %d files\t %d folders" % total_all_files, total_folders)
+    print("Parsed %d files\t %d folders" % (total_all_files, total_folders))
     return total_all_files, total_folders
 
 if __name__ == "__main__":
@@ -424,7 +436,7 @@ if __name__ == "__main__":
 
     # Data accumulation
     all_folders = FolderTracker()   # Accumulates all folders during run
-    tracked_files = dict()           # Accumulates files of interest during run
+    tracked_files: Dict[str, TrackedFile] = dict()           # Accumulates files of interest during run
 
     all_file_set = []       # Only for intense debugging; not generally used
 
@@ -432,7 +444,7 @@ if __name__ == "__main__":
     # todo Note: already verified this does not have duplicates
 
     # ******* This is the main run *********
-    run_with_recursive_look_up("0B4aSdoErkE3vTHRTdzRzOTBIR3M") # "active"
+    run_with_recursive_look_up("1pEsKG9ZkRRYnZVbS3-JzQ1DNMA5_7h0O") # "active"
     #run_with_query()
 
     # Post processing
@@ -448,3 +460,12 @@ if __name__ == "__main__":
         pickle.dump(all_folders, pickle_file)
         pickle.dump(tracked_files, pickle_file)
         pickle_file.close()
+
+        with open("csv_tracked_files.csv", "w") as csv_file:
+            csv_columns = ['name', 'id', 'url', 'fullpath', 'non_user_owners', 'is_folder']
+            csv_columns.extend(list(FileProperties.get_default_properties().keys()))
+            writer = csv.DictWriter(csv_file, csv_columns)
+            writer.writeheader()
+            for file in tracked_files.values():
+                writer.writerow(file.tracked_file_csv_info())
+
