@@ -62,7 +62,8 @@ class FileProperties:
             "non_auth_user_file" : False,
             "has_more_than_one_permission" : False,
             "has_non_user_permission" : False,
-            "has_link_sharing" : False
+            "has_link_sharing" : False,
+            "is_orphan" : False
         }
         return default_dict
 
@@ -160,7 +161,8 @@ class Folder:
         # These two are always set and safe to read
         self.id = file_id
         self.num_direct_children = 0    # This is incremented during processing. Early fetches may be wrong
-        self.child_folders = []         # Same as above
+        self.size_of_direct_children = 0# Same as above
+        self.child_folders: List[Folder] = []         # Same as above
 
         # Whether file has been explicitly processed
         self._seen = False      # Set to true when name is parsed; Indicates whether this folder has been
@@ -174,9 +176,11 @@ class Folder:
         self._full_path = None   # Generally set during post-processing. Lazily fetched
         self._name = ""          # Set by file lookup. Lazily fetched
         self._parent = None      # Set by file lookup. Lazily fetched
+        self._url = ""
 
         # True post processing (last traverse of tree). If these values differ from -1, then have been set
         self._all_children_count = -1   # count of all individual subchildren (through subdirectories to end)
+        self._size_all_children = -1
         self._depth = -1
 
     # Populates all fields for the folder.
@@ -189,6 +193,7 @@ class Folder:
 
         self._name = file['title']
         self._parent = parent
+        self._url = file['alternateLink']
 
         if self._parent is None:
             if is_root_folder(file): self._is_root = True
@@ -267,20 +272,34 @@ class Folder:
     @lazy_property_folder_metadata
     def is_root(self):
         return self._is_root
+    @lazy_property_folder_metadata
+    def url(self):
+        return self._url
 
     # Post processing. Both functions are recursive and iterate through all folders.
+    @property
+    def size_all_children(self):
+        if self._size_all_children > -1:
+            return self._size_all_children
+        self.traverse_all_children()
+        return self._size_all_children
+
     @property
     def all_children_count(self):
         if self._all_children_count > -1:   # already set (only do once)
             return self._all_children_count
-        self._all_children_count = 0
-
-        # Otherwise, iterate through the child_folders
-        for child in self.child_folders:
-            self._all_children_count += child.get_all_children_count()
-        self._all_children_count += self.num_direct_children
-
+        self.traverse_all_children()
         return self._all_children_count
+
+    def traverse_all_children(self):
+        self._size_all_children = 0
+        self._all_children_count = 0
+        for child in self.child_folders:
+            self._size_all_children += child.size_all_children
+            self._all_children_count += child.all_children_count
+
+        self._size_all_children += self.size_of_direct_children
+        self._all_children_count += self.num_direct_children
 
     @property
     def depth(self):
@@ -300,7 +319,7 @@ class Folder:
 # A dictionary with a few new features. Not implemented in the prettiest way
 class FolderTracker:
     def __init__(self):
-        self.data = dict()
+        self.data : Dict[str, Folder] = dict()
 
     # Look up without creation of a new folder if one doesn't exist
     def static_folder_lookup(self, folder_id) -> Optional[Folder]:
@@ -321,7 +340,7 @@ class FolderTracker:
 
     # Records the file. 1) Logs in enclosing parent folder; 2) If this is a folder,
     # then creates folder for this file
-    def log_item(self, file):
+    def log_item(self, file: Dict):
         file_id = file['id']
         is_a_folder = is_folder(file)
         parent = get_parent(file)
@@ -332,6 +351,9 @@ class FolderTracker:
             parent_folder = self._get_folder_or_initialize(parent)
             parent_folder.num_direct_children += 1
 
+            filesize = file.get('fileSize', 0)
+            parent_folder.size_of_direct_children += int(filesize)
+
         if is_a_folder:
             # Record the folder info
             folder = self._get_folder_or_initialize(file_id)
@@ -340,7 +362,7 @@ class FolderTracker:
             if parent is not None:
                 parent_folder.child_folders.append(folder)
 
-        check_file(file, parent_folder)
+        check_file(file, parent_folder) # Checks and potentially logs this file to be tracked #todo: best place?
 
     # Postprocessing: recursively fill the paths for all folders
     def populate_all_paths(self):
@@ -385,11 +407,13 @@ def check_file(file, parent: Folder):
     if not "Josh Rozner" in file['ownerNames']:
         properties_dict['non_auth_user_file'] = True
 
+    if parent is None and not is_root_folder(file):
+        properties_dict['is_orphan'] = True
+
     if True in properties_dict.values():
         tracked_files[file_id] = TrackedFile(file, properties_dict, parent)
 
 def run_with_recursive_look_up(starting_id):
-    #todo_stack = [""]
     todo_stack = [starting_id]
     total_all_files = 0
     total_folders = 0
@@ -400,12 +424,12 @@ def run_with_recursive_look_up(starting_id):
         for file_list in drive.ListFile(query):
             total_all_files += len(file_list)
             print(total_all_files)
-            for f in file_list:
+            for file in file_list:
                 if intense_debug:
-                    all_file_set.append(f)
-                all_folders.log_item(f)
-                if is_folder(f):
-                    todo_stack.append(f['id'])
+                    all_file_set.append(file)
+                all_folders.log_item(file)
+                if is_folder(file):
+                    todo_stack.append(file['id'])
                     total_folders += 1
 
     print("Parsed %d files\t %d folders" % (total_all_files, total_folders))
@@ -421,31 +445,22 @@ def run_with_query(query=""):
     for file_list in drive.ListFile(query):
         total_all_files += len(file_list)
         print(total_all_files)
-        for f in file_list:
-            if is_folder(f): total_folders += 1
-            all_folders.log_item(f)
+        for file in file_list:
+            if is_folder(file): total_folders += 1
+            all_folders.log_item(file)
 
     print("Parsed %d files\t %d folders" % (total_all_files, total_folders))
     return total_all_files, total_folders
 
-if __name__ == "__main__":
+def main():
     # Auth login (see also settings.yaml)
-    gauth = GoogleAuth()
-    gauth.LocalWebserverAuth()
-    drive = GoogleDrive(gauth)
-
-    # Data accumulation
-    all_folders = FolderTracker()   # Accumulates all folders during run
-    tracked_files: Dict[str, TrackedFile] = dict()           # Accumulates files of interest during run
-
-    all_file_set = []       # Only for intense debugging; not generally used
 
     #todo: make sure owner is josh, not in trash
     # todo Note: already verified this does not have duplicates
 
     # ******* This is the main run *********
-    run_with_recursive_look_up("1pEsKG9ZkRRYnZVbS3-JzQ1DNMA5_7h0O") # "active"
-    #run_with_query()
+    #run_with_recursive_look_up("1pEsKG9ZkRRYnZVbS3-JzQ1DNMA5_7h0O") # "active"
+    run_with_query()
 
     # Post processing
     all_folders.populate_all_paths()
@@ -469,3 +484,37 @@ if __name__ == "__main__":
             for file in tracked_files.values():
                 writer.writerow(file.tracked_file_csv_info())
 
+        folders_list = list(all_folders.data.values())
+        for f in folders_list:
+            f.traverse_all_children()
+        folders_list.sort(key=lambda x: x.full_path)
+
+        with open("csv_folder_info.csv", "w") as csv_file:
+            csv_columns = ['folder_name', 'id', 'url','fullpath', 'num_children', 'total_size']
+            writer = csv.DictWriter(csv_file, csv_columns)
+            writer.writeheader()
+            for folder in folders_list:
+                #todo: only count certain foldres
+                row = {
+                    'folder_name' : folder.name,
+                    'id' : folder.id,
+                    'url' : folder.url,
+                    'fullpath' : folder.full_path,
+                    'num_children' : folder.all_children_count,
+                    'total_size' : folder.size_all_children
+                }
+                writer.writerow(row)
+
+
+if __name__ == "__main__":
+    gauth = GoogleAuth()
+    gauth.LocalWebserverAuth()
+    drive = GoogleDrive(gauth)
+
+    # Data accumulation
+    all_folders: FolderTracker = FolderTracker()   # Accumulates all folders during run
+    tracked_files: Dict[str, TrackedFile] = dict()           # Accumulates files of interest during run
+
+    all_file_set = []       # Only for intense debugging; not generally used
+
+    main()
