@@ -38,7 +38,7 @@ def lazy_property_folder_metadata(fn):
 
 # Basic run flags (todo - argparse)
 intense_debug = False   # Will print all files parsed
-run_short_test = False  # Run recurisvely over the tester_id folder / file provided in config, instead of
+run_short_test = True # Run recurisvely over the tester_id folder / file provided in config, instead of
                         # Over the whole API
 should_write_output = True
 
@@ -397,7 +397,12 @@ class Folder:
             parent_id = SafeFile.get_parent_id(file_to_fetch)
             parent_folder = None
             if parent_id is not None:
-                parent_folder = all_folders.get_folder_or_initialize(parent_id)
+                # Try to get an existing folder, otherwise create a new one
+                parent_folder = all_folders.static_folder_lookup(parent_id, none_is_okay=True)
+                if parent_folder is None:
+                    parent_folder = Folder(parent_id)
+                # todo: this will complain about dictionary modification during processing, but it's how it should work
+                #parent_folder = all_folders.get_folder_or_initialize(parent_id)
                 parent_folder.num_direct_children += 1
                 filesize = SafeFile.file_size(file_to_fetch)
                 parent_folder.size_of_direct_children += int(filesize)
@@ -679,12 +684,11 @@ if __name__ == "__main__":
     my_user_name = config['my_user_name']
     rootdirs = config['rootdirs']
     orphan_prefix = config['orphan_prefix']
-    name_for_non_seeable_folders = config["no_name"]
+    name_for_non_seeable_folders = config["name_for_non_seeable_folders"]
     tester_id = config['tester_id']
     max_results_api_setting = config['max_results_api_setting']
     max_metadata_fetch_try_count = config['max_metadata_fetch_try_count']          # Generally fetch never fails
-    log_file_if_size_greater_than_limit = config['log_file_if_size_greater_than_limit'] # (100 MB)
-
+    log_file_if_size_greater_than_limit = float(config['log_file_if_size_greater_than_limit']) # (100 MB)
 
     # Data accumulation
     all_folders: FolderTracker = FolderTracker()    # Accumulates all folders during run.
