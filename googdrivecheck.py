@@ -3,6 +3,7 @@ from pprint import pprint as pp
 from typing import Dict, List, NoReturn, Optional
 import csv
 import pickle
+import yaml
 
 from pydrive.auth import GoogleAuth
 from pydrive.drive import GoogleDrive, GoogleDriveFile
@@ -34,22 +35,15 @@ def lazy_property_folder_metadata(fn):
     To change files that are tracked, change review_and_maybe_track -> TrackedFile -> _fetch_sharing_metadata
     To change files the API returns, modify the query functions called by main()
 '''
-# Todo
-intense_debug = False
-debug = False
-run_short_debug = False
+
+# Basic run flags (todo - argparse)
+intense_debug = False   # Will print all files parsed
+run_short_test = False  # Run recurisvely over the tester_id folder / file provided in config, instead of
+                        # Over the whole API
 should_write_output = True
 
 # Todo: add these to yaml config
 # Drive defines "My Drive" as root, but backed up computers are not captured.
-my_user_name = "Josh Rozner"
-rootdirs = ["My Drive", "My MacBook Air"]
-orphan_prefix = "0_orphan"
-name_for_non_seeable_folders = "no_name"
-tester_id = "0B4aSdoErkE3vRkUwR3ZPaWlxN3c"
-max_results_api_setting = 1000
-max_metadata_fetch_try_count = 5          # Generally fetch never fails
-log_file_if_size_greater_than_limit = 1e8 # (100 MB)
 
 # Util functions
 def print_file_note(description_string, file):
@@ -91,7 +85,7 @@ class FileProperties:
         "has_non_user_or_anyone_permission" : False,      # Whether file has a permission that is not use or anyone
                                                           # As of this writing that is domain or group
         "has_link_sharing" : False,                       # Equivalent to having an 'anyone' permission
-        "users_domains_groups_with_access" : []           # Specific groups, users, domains with access
+        "users_groups_domains_with_access" : []           # Specific groups, users, domains with access
     }
 
 class SafeFile:
@@ -222,6 +216,7 @@ class SafeFile:
         if len(file['owners']) > 1:
             properties_dict['multi_owners'] = True
             print_file_note("file has multi owners", file)
+        # todo: should do this with owners -> is authenticated user
         if not my_user_name in file['ownerNames']:
             properties_dict['non_auth_user_file'] = True
         if len(file['owners']) != len(file['ownerNames']):
@@ -622,7 +617,7 @@ def run_with_query(query=""):
 
 def main():
     # ******* This is the main run *********
-    if run_short_debug: run_with_recursive_look_up(tester_id)
+    if run_short_test: run_with_recursive_look_up(tester_id)
     else: run_with_query()
 
     # Post processing
@@ -655,7 +650,7 @@ def main():
         folders_list.sort(key=lambda x: x.full_path)
 
         with open("csv_folder_info.csv", "w") as csv_file:
-            csv_columns = ['folder_name', 'id', 'url','fullpath', 'num_children', 'total_size']
+            csv_columns = ['folder_name', 'id', 'url','fullpath', 'num_children', 'total_size', 'owners']
             writer = csv.DictWriter(csv_file, csv_columns)
             writer.writeheader()
             for folder in folders_list:
@@ -678,6 +673,19 @@ if __name__ == "__main__":
     gauth = GoogleAuth()
     gauth.LocalWebserverAuth()
     drive = GoogleDrive(gauth)
+
+    # Parse yaml
+    config = yaml.load(open('settings.yaml'))
+
+    my_user_name = config['my_user_name']
+    rootdirs = config['rootdirs']
+    orphan_prefix = "0_orphan"
+    name_for_non_seeable_folders = "no_name"
+    tester_id = "0B4aSdoErkE3vRkUwR3ZPaWlxN3c"
+    max_results_api_setting = 1000
+    max_metadata_fetch_try_count = 5          # Generally fetch never fails
+    log_file_if_size_greater_than_limit = 1e8 # (100 MB)
+
 
     # Data accumulation
     all_folders: FolderTracker = FolderTracker()    # Accumulates all folders during run.

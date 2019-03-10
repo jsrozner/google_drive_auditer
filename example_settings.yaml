@@ -1,0 +1,38 @@
+# Config for pydrive
+client_config_backend: settings
+
+client_config:
+  client_id:      # From your client_secret.json
+  client_secret:  # From your client_secret.json
+
+save_credentials: True
+save_credentials_backend: file
+save_credentials_file: saved_credentials.json
+
+get_refresh_token: True
+
+# Config for googledrivecheck
+
+# Personal settings:
+my_user_name:  "John Smith"    # This is the google user name for the user who is running the program
+                                # This is how the program identifies files not owned by the running user
+rootdirs: ["My Drive", "My Computer"]     # "My Computer" is an example -- this occurs if you backup
+                                            # your local documents or other folders on your computer outside
+                                            # your drive.
+# For testing
+tester_id: "enter_folder_or_file_id_as string"   # A file ID from which to recursively parse.
+                                            # Also set the "run_short_test" flag
+
+# Some sensible defaults. No need to change these
+orphan_prefix: "0_orphan"                   # Prefix for outputted fullpaths for orphan fils
+name_for_non_seeable_folders: "no_name"     # Name for any folders where metadata lookup fails
+
+max_results_api_setting: 1000               # Default value for max results per API request (program executes
+                                            # requests until all files are returned
+max_metadata_fetch_try_count: 5             # How many times to try lookup before giving up.
+                                            # Generally fetch never fails
+
+# Specific query settings (i.e. what files to track)
+log_file_if_size_greater_than_limit: 1e8 # (100 MB)
+
+
