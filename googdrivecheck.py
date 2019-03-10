@@ -676,15 +676,14 @@ if __name__ == "__main__":
 
     # Parse yaml
     config = yaml.load(open('settings.yaml'))
-
     my_user_name = config['my_user_name']
     rootdirs = config['rootdirs']
-    orphan_prefix = "0_orphan"
-    name_for_non_seeable_folders = "no_name"
-    tester_id = "0B4aSdoErkE3vRkUwR3ZPaWlxN3c"
-    max_results_api_setting = 1000
-    max_metadata_fetch_try_count = 5          # Generally fetch never fails
-    log_file_if_size_greater_than_limit = 1e8 # (100 MB)
+    orphan_prefix = config['orphan_prefix']
+    name_for_non_seeable_folders = config["no_name"]
+    tester_id = config['tester_id']
+    max_results_api_setting = config['max_results_api_setting']
+    max_metadata_fetch_try_count = config['max_metadata_fetch_try_count']          # Generally fetch never fails
+    log_file_if_size_greater_than_limit = config['log_file_if_size_greater_than_limit'] # (100 MB)
 
 
     # Data accumulation
