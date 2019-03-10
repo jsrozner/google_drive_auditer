@@ -1,83 +1,208 @@
 from __future__ import annotations
 from pprint import pprint as pp
-from typing import Dict, List, Optional
+from typing import Dict, List, NoReturn, Optional
 import csv
 import pickle
 
 from pydrive.auth import GoogleAuth
-from pydrive.drive import GoogleDrive
+from pydrive.drive import GoogleDrive, GoogleDriveFile
 
-def lazy_property_folder_metadata(fn):
+def lazy_property_folder_metadata(fn: function):
     """Decorator for lazily fetching certain metadata"""
     @property
     def _lazy_property(self: Folder):
         if not self._seen:
             self._do_lookup_from_drive()
         if self._metadata_lookup_failed:
-            print("Metadata lookup unsuccessful. Default value returned for %s" + fn.__repr__)
+            print("Metadata lookup unsuccessful. Yield default. File: %s\t, metadata: %s\t, id: %s" %
+                  (self._name, fn.__name__, self.id))
         return fn(self)
     return _lazy_property
 
 # Todo
 intense_debug = False
 debug = False
+run_short_debug = False
+should_write_output = True
 
-# Todo
+# Todo: add these to yaml config
 # Drive defines "My Drive" as root, but backed up computers are not captured.
+my_user_name = "Josh Rozner"
 rootdirs = ["My Drive", "My MacBook Air"]
 orphan_prefix = "0_orphan"
 name_for_non_seeable_folders = "no_name"
+tester_id = "0B4aSdoErkE3vRkUwR3ZPaWlxN3c"
 
 # Util functions
-def is_folder(file):
-    return file['mimeType'] == "application/vnd.google-apps.folder"
-def is_root_folder(file):
-    return file['title'] in rootdirs and len(file['parents']) == 0
 def print_file_note(description_string, file):
-    print("file_note: " + description_string + ("\n title: %s\t id:%s" % (file['title'], file['id'])))
+    print("file_note: " + description_string +
+          ("\n title: %s\t id:%s" % (SafeFile.safe_get(file, 'name'), SafeFile.safe_get(file, 'id'))))
+# This function is a little hacky because it's for debugging. We modify File inplace.
+def print_set(set_name, file_set: List):
+    print("** Printing set: %s" % set_name)
+    for file in file_set:
+        parent_folder_id = SafeFile.get_parent_id(file)
+        parent_folder = all_folders.static_folder_lookup(parent_folder_id, none_is_okay=True)
+        file['fullpath'] = SafeFile.get_full_path(file, parent_folder)
 
-# Fetches the first parent's ID.
-# Returns None if no parent
-# Prints notice if more than one parent
-def get_parent(file):
-    parent_array = file['parents']
-    if len(parent_array) == 0:
-        return None
+    file_set.sort(key=lambda x: x['fullpath'])
+    pp([x['fullpath'] for x in file_set])
 
-    if(len(parent_array)) > 1:
-        print("** more than one parent")
-
-    return parent_array[0]['id']
-
-# Simple class to initialize a dictionary of the properties we want to track
+# Simple class to initialize a dictionary of the properties we will track
+# Todo: prevent adding new properties (e.g. by wrong name ref)
 class FileProperties:
-    @classmethod
-    def get_default_properties(cls):
-        default_dict = {
-            "shared" : False,
-            "spaces_photo" : False,
-            "spaces_app" : False,
-            "trashed" : False,
-            "multi_owners" : False,
-            "non_auth_user_file" : False,
-            "has_more_than_one_permission" : False,
-            "has_non_user_permission" : False,
-            "has_link_sharing" : False,
-            "is_orphan" : False
-        }
-        return default_dict
+    default_dict : Dict[str,bool] = {
+        # These are accessed set in SafeFile.review_and_maybe_track()
+        "shared" : False,
+        "spaces_photo" : False,
+        "spaces_app" : False,
+        "trashed" : False,
+        "multi_owners" : False,
+        "non_auth_user_file" : False,
+        "is_orphan" : False,
+        "has_multiple_parents" : False, #todo
 
-# A file that has a property we care about. Files without interesting properties are not tracked
-# After being initialized, everything can be safely accessed. Generally set once and then read upon output
+        # These are set in TrackedFile._fetch_metadata() (only called if shared = True)
+        "has_more_than_one_permission" : False,
+        "has_non_user_permission" : False,
+        "has_link_sharing" : False,
+    }
+
+class SafeFile:
+    """ Use this class to access fields in GoogleDriveFile, in case API ever changes
+    Any special drive-like fields that are API dependent should be contained here.
+    """
+    property_mapping = {
+        'name' : 'title',
+        'id' : 'id',
+        'mimeType' : 'mimeType',
+        'owners' : 'owners',
+        'ownerNames' : 'ownerNames',
+        'url' : 'alternateLink',
+        'permissions' : 'permissions',
+        'shared' : 'shared',
+
+        # Special properties
+        '_safe_parents': 'parents',
+        '_spaces': 'spaces'
+
+        # Special properties that are not fetched with safe_get()
+        # fileSize
+        # labels
+    }
+    @classmethod
+    def safe_get(cls, file: GoogleDriveFile, item: str, issue_warning_if_not_present=True):
+        internal_name_for_attr = SafeFile.property_mapping.get(item, None)
+        if internal_name_for_attr is None:
+            raise Exception("Invalid requested attr in SafeFile: %s" % item)
+        #todo: why is file.get(internal_name_for_attr) not working in some cases?
+        try:
+            attr_value = file[internal_name_for_attr]
+        except KeyError:
+            if issue_warning_if_not_present:
+                print("File %s does not have attr: %s" % (file['title'], internal_name_for_attr))
+                pp(file)
+            attr_value = None
+        return attr_value
+
+    @classmethod
+    def get_parent_id(cls, file: GoogleDriveFile) -> Optional[str]:
+        parent_array = SafeFile.safe_get(file, "_safe_parents")
+        if len(parent_array) == 0:
+            return None
+        if(len(parent_array)) > 1:
+            print("** more than one parent")
+        return parent_array[0]['id']
+
+    @classmethod
+    def is_folder(cls, file: GoogleDriveFile) -> bool:
+        return SafeFile.safe_get(file, 'mimeType') == "application/vnd.google-apps.folder"
+
+    @classmethod
+    def is_root_folder(cls, file:GoogleDriveFile) -> bool:
+        return SafeFile.safe_get(file, 'name') in rootdirs and \
+               len(SafeFile.safe_get(file, '_safe_parents')) == 0
+
+    @classmethod
+    def get_full_path(cls, file:GoogleDriveFile, parent_folder: 'Folder') -> str:
+        file_name = SafeFile.safe_get(file, 'name')
+        if parent_folder is None:
+            return orphan_prefix + "/" + file_name
+
+        parent_folder_path = parent_folder.full_path
+        return parent_folder_path + "/" + file_name
+
+    @classmethod
+    def get_all_owners(cls, file:GoogleDriveFile) -> List[str]:
+        owners = SafeFile.safe_get(file, 'owners')
+        return list(x['displayName'] for x in owners)
+
+    @classmethod
+    def has_link_sharing(cls, file:GoogleDriveFile) -> bool:
+        if "anyone" in SafeFile.non_user_permissions_type_list(file):
+            return True
+        return False
+    @classmethod
+    def non_user_permissions_type_list(cls, file:GoogleDriveFile) -> List[str]:
+        permissions = SafeFile.safe_get(file, 'permissions')
+        return list(perm['type']
+                    for perm in permissions if perm['type'] not in ["user"])
+    @classmethod
+    def special_permissions_list(cls, file:GoogleDriveFile) -> List[List[str]]:
+        permissions = SafeFile.safe_get(file, 'permissions')
+        return list([perm['type'],perm.get('emailAddress')]
+                    for perm in permissions if perm['type'] not in ["user", "anyone"])
+
+    @classmethod
+    def file_size(cls, file:GoogleDriveFile) -> int:
+        #FileSize is not populated for google docs
+        file_size = SafeFile.safe_get(file, 'fileSize', issue_warning_if_not_present=False)
+        if file_size is None:
+            file_size = 0
+        return file_size
+
+    @classmethod
+    def review_and_maybe_track(cls, file: GoogleDriveFile, parent: 'Folder'):
+        file_id = SafeFile.safe_get(file, "id")
+        properties_dict = FileProperties.default_dict.copy()    #This was a big mistake
+
+        if SafeFile.safe_get(file, 'shared'):
+            properties_dict['shared'] = True
+
+        if "photos" in SafeFile.safe_get(file, '_spaces'):
+            properties_dict['spaces_photo'] = True
+        elif "spaces_app" in SafeFile.safe_get(file, '_spaces'):
+            properties_dict['spaces_app'] = True
+            print_file_note("App space", file)
+
+        if file['labels']['trashed']:
+            properties_dict['trashed'] = True
+            print_file_note("file is trashed", file)
+        if len(file['owners']) > 1:
+            properties_dict['multi_owners'] = True
+            print_file_note("file has multi owners", file)
+        if not my_user_name in file['ownerNames']:
+            properties_dict['non_auth_user_file'] = True
+        if len(file['owners']) != len(file['ownerNames']):
+            print_file_note("owners and ownerNames are different lengths", file)
+        if parent is None and not SafeFile.is_root_folder(file):
+            properties_dict['is_orphan'] = True
+        if len(SafeFile.safe_get(file, "_safe_parents")) > 1:
+            properties_dict['has_multiple_parents'] = True
+            print_file_note("has multiple parents", file)
+
+        if True in properties_dict.values():
+            tracked_files[file_id] = TrackedFile(file, properties_dict, parent)
+
+
 class TrackedFile:
-    def __init__(self, file, properties_dictionary: dict, parent: 'Folder'):
+    """A file that has a property we care about. Files without interesting properties are not tracked (save space)
+        After being initialized, everything can be safely accessed. Generally set once and then read upon output
+    """
+    def __init__(self, file: GoogleDriveFile, properties_dictionary: dict, parent_folder: 'Folder'):
         self.file = file
         self.props = properties_dictionary
-        self.non_user_owners = []
-        self.parent = parent
-
-        if properties_dictionary['non_auth_user_file']:
-            self.non_user_owners = list(x['displayName'] for x in file['owners'])
+        self.parent_folder = parent_folder
 
         # Metadata fetch is expensive, so
         # Only fetch sharing for files owned by us (if not owned by us, of course it's shared!) and that are shared
@@ -85,22 +210,20 @@ class TrackedFile:
             self._fetch_sharing_metadata()
 
     def __repr__(self):
-        return self.file['title'] + "\n" + self.props.__repr__()
+        return SafeFile.safe_get(self.file, 'name') + "\n" + self.props.__repr__()
 
     def tracked_file_csv_info(self):
+        # Copy over the props we already have, then add in other fields to write.
         output_dict = self.props.copy()
-        output_dict['name'] = self.file['title']
-        output_dict['id'] = self.file['id']
-        output_dict['url'] = self.file['alternateLink']
-        if self.parent is None:
-            full_path = orphan_prefix + "/" + self.file['title']
-        else:
-            full_path = self.parent.full_path + "/" + self.file['title']
-        output_dict['fullpath'] = full_path
-        output_dict['non_user_owners'] = self.non_user_owners
-        output_dict['is_folder'] = is_folder(self.file)
+        output_dict['name'] = SafeFile.safe_get(self.file,'name')
+        output_dict['id'] = SafeFile.safe_get(self.file, 'id')
+        output_dict['url'] = SafeFile.safe_get(self.file, 'url')
+        output_dict['fullpath'] = SafeFile.get_full_path(self.file, self.parent_folder)
+        output_dict['non_user_owners'] = SafeFile.get_all_owners(self.file)
+        output_dict['is_folder'] = SafeFile.is_folder(self.file)
         return output_dict
 
+    # Internal method called only for files that are not owned by us and that are shared.
     def _fetch_sharing_metadata(self):
         file = self.file
         is_shared = self.props['shared']
@@ -115,10 +238,11 @@ class TrackedFile:
                 if fetch_try_count > 0:
                     print("fetch success after %d tries" % fetch_try_count)
                 break
-            except Exception:
+            except Exception as e:
                 if fetch_try_count == 0:
-                    print("error fetching metadata for title: %s\t id: %s" % (file['title'], file['id']))
-                    print(str(Exception))
+                    print("error fetching metadata for title: %s\t id: %s" %
+                          (SafeFile.safe_get(file, 'name'), SafeFile.safe_get(file, 'id')))
+                    print(str(e))
                 fetch_try_count += 1
 
         # Fail early if all fetches failed
@@ -130,21 +254,17 @@ class TrackedFile:
         has_non_user_permission = False        # This in general will match link_sharing, except in rare cases
         has_link_sharing = False
 
-        if len(file['permissions']) > 1:
+        if len(SafeFile.safe_get(file, 'permissions')) > 1:
             self.props['has_more_than_one_permission'] = True
 
-        permission_type_list = \
-            list([[perm['type'],perm.get('emailAddress')] for perm in file['permissions'] if perm['type'] != "user"])
-        if "anyone" in permission_type_list:
-            self.props['has_link_sharing'] = True
+        special_permissions_info = SafeFile.special_permissions_list(file)
+        if len(special_permissions_info) > 0:
+            print_file_note("non user-anyone permission type", file)
+            pp(special_permissions_info)
+            self.props['has_non_user_permission'] = True
 
-        # todo: prettier way?
-        for permission in permission_type_list:
-            if permission[0] not in ['anyone']:
-                print_file_note("non user or anyone permission type", file)
-                pp(permission_type_list)
-                self.props['has_non_user_permission'] = True
-                break
+        if SafeFile.has_link_sharing(file):
+            self.props['has_link_sharing'] = True
 
         # Some verifications based on our expectations of how sharing works.
         if has_non_user_permission:
@@ -161,7 +281,7 @@ class Folder:
     def __repr__(self):
         return " ".join("{}={!r}".format(k, v) for k, v in self.__dict__.items())
 
-    def __init__(self, file_id):
+    def __init__(self, file_id: str):
         # These two are always set and safe to read
         self.id = file_id
         self.num_direct_children = 0    # This is incremented during processing. Early fetches may be wrong
@@ -179,7 +299,7 @@ class Folder:
         self._is_root = False    # Could be wrong if lookup failed
         self._full_path = None   # Generally set during post-processing. Lazily fetched
         self._name = ""          # Set by file lookup. Lazily fetched
-        self._parent = None      # Set by file lookup. Lazily fetched
+        self._parent_folder = None      # Set by file lookup. Lazily fetched
         self._url = ""
 
         # True post processing (last traverse of tree). If these values differ from -1, then have been set
@@ -188,19 +308,19 @@ class Folder:
         self._depth = -1
 
     # Populates all fields for the folder.
-    def populate_fields_from_file(self, file, parent: 'Folder'):
+    def populate_fields_from_file(self, file: GoogleDriveFile, parent_folder: 'Folder'):
         if self._seen:
             raise Exception("Fields have already been populated once")
         if self._metadata_lookup_failed:
             raise Exception("Metadata lookup failed. Invalid call to populate fields")
         self._seen = True
 
-        self._name = file['title']
-        self._parent = parent
-        self._url = file['alternateLink']
+        self._name = SafeFile.safe_get(file, 'name')
+        self._parent_folder = parent_folder
+        self._url = SafeFile.safe_get(file, 'url')
 
-        if self._parent is None:
-            if is_root_folder(file): self._is_root = True
+        if self._parent_folder is None:
+            if SafeFile.is_root_folder(file): self._is_root = True
             else: self._is_orphan = True
 
     # Do a google drive lookup and fill the normal fields
@@ -212,18 +332,18 @@ class Folder:
         try:
             # We try to fetch the data for this file
             file_to_fetch = drive.CreateFile({'id': self.id})
-            print("fetched metadata for %s" % file_to_fetch['title'])
+            print("fetched metadata for %s" % SafeFile.safe_get(file_to_fetch, 'name'))
 
-            parent_id = get_parent(file_to_fetch)
+            parent_id = SafeFile.get_parent_id(file_to_fetch)
             parent_folder = None
             if parent_id is not None:
                 parent_folder = Folder(parent_id)
 
             # We also create a parent folder for this file
-            self.populate_fields_from_file(file_to_fetch, parent=parent_folder)
-        except Exception:
+            self.populate_fields_from_file(file_to_fetch, parent_folder)
+        except Exception as e:
             print("error trying to fetch folder %s" % self.id)
-            print(str(Exception))
+            print(str(e))
             pp(file_to_fetch)
             pp(self)
             self._metadata_lookup_failed = True
@@ -269,7 +389,7 @@ class Folder:
         return self._name
     @lazy_property_folder_metadata
     def parent(self):
-        return self._parent
+        return self._parent_folder
     @lazy_property_folder_metadata
     def is_orphan(self):
         return self._is_orphan
@@ -321,19 +441,20 @@ class Folder:
 # A dictionary of Folders
 # id => Folder
 # A dictionary with a few new features. Not implemented in the prettiest way
+# This
 class FolderTracker:
     def __init__(self):
         self.data : Dict[str, Folder] = dict()
 
     # Look up without creation of a new folder if one doesn't exist
-    def static_folder_lookup(self, folder_id) -> Optional[Folder]:
-        look_up_result = self.data.get(folder_id)
-        if not look_up_result:
+    def static_folder_lookup(self, folder_id, none_is_okay=False) -> Optional[Folder]:
+        look_up_result = self.data.get(folder_id, None)
+        if not look_up_result and not none_is_okay:
             raise Exception("Folder not found in static_folder_lookup: %s" % folder_id)
         return look_up_result
 
     # Look up and initialize
-    def _get_folder_or_initialize(self, folder_id):
+    def _get_folder_or_initialize(self, folder_id) -> Folder:
         if folder_id in self.data:
             return self.data[folder_id]
         else:
@@ -344,10 +465,10 @@ class FolderTracker:
 
     # Records the file. 1) Logs in enclosing parent folder; 2) If this is a folder,
     # then creates folder for this file
-    def log_item(self, file: Dict):
-        file_id = file['id']
-        is_a_folder = is_folder(file)
-        parent = get_parent(file)
+    def log_item(self, file: GoogleDriveFile) -> NoReturn:
+        file_id = SafeFile.safe_get(file, 'id')
+        is_a_folder = SafeFile.is_folder(file)
+        parent = SafeFile.get_parent_id(file)
         parent_folder = None
 
         if parent is not None:
@@ -361,61 +482,17 @@ class FolderTracker:
         if is_a_folder:
             # Record the folder info
             folder = self._get_folder_or_initialize(file_id)
-            folder.populate_fields_from_file(file, parent=parent_folder)
+            folder.populate_fields_from_file(file, parent_folder)
             # only log a child if the child is itself a folder
             if parent is not None:
                 parent_folder.child_folders.append(folder)
 
-        check_file(file, parent_folder) # Checks and potentially logs this file to be tracked #todo: best place?
+        SafeFile.review_and_maybe_track(file, parent_folder) # Checks and potentially logs this file to be tracked
 
     # Postprocessing: recursively fill the paths for all folders
     def populate_all_paths(self):
         for folder in self.data.values():
             _ = folder.full_path
-
-def print_set(set_name, file_set: List):
-    print("** Printing set: %s" % set_name)
-    for file in file_set:
-        parent_folder_id = get_parent(file)
-        if parent_folder_id is None:
-            file['fullpath'] = orphan_prefix + "/" + file['title']
-        else:
-            parent_folder = all_folders.static_folder_lookup(parent_folder_id)
-            parent_folder_path = parent_folder.full_path
-            file['fullpath'] = parent_folder_path + "/" + file['title']
-
-    file_set.sort(key=lambda x: x['fullpath'])
-    pp([x['fullpath'] for x in file_set])
-
-
-def check_file(file, parent: Folder):
-    file_id = file['id']
-    properties_dict = FileProperties.get_default_properties()
-
-    if file['shared']:
-        properties_dict['shared'] = True
-
-    if "photos" in file["spaces"]:
-        properties_dict['spaces_photo'] = True
-    elif "appDataFolder" in file["spaces"]:
-        properties_dict['spaces_app'] = True
-
-    if file['labels']['trashed']:
-        properties_dict['trashed'] = True
-        print_file_note("file is trashed", file)
-
-    if len(file['owners']) > 1:
-        properties_dict['multi_owners'] = True
-        print_file_note("file has multi owners", file)
-
-    if not "Josh Rozner" in file['ownerNames']:
-        properties_dict['non_auth_user_file'] = True
-
-    if parent is None and not is_root_folder(file):
-        properties_dict['is_orphan'] = True
-
-    if True in properties_dict.values():
-        tracked_files[file_id] = TrackedFile(file, properties_dict, parent)
 
 def run_with_recursive_look_up(starting_id):
     todo_stack = [starting_id]
@@ -432,14 +509,15 @@ def run_with_recursive_look_up(starting_id):
                 if intense_debug:
                     all_file_set.append(file)
                 all_folders.log_item(file)
-                if is_folder(file):
-                    todo_stack.append(file['id'])
+                if SafeFile.is_folder(file):
+                    todo_stack.append(SafeFile.safe_get(file, 'id'))
                     total_folders += 1
 
     print("Parsed %d files\t %d folders" % (total_all_files, total_folders))
-    return total_all_files, total_folders
 
 def run_with_query(query=""):
+    # Todo: Consider augmenting query with owner = user
+    # Note files will never appear multiple times (verified previously)
     if query == "":
         q_string = "trashed=false"
         query = {'maxResults': 1000, 'q': q_string}
@@ -450,21 +528,15 @@ def run_with_query(query=""):
         total_all_files += len(file_list)
         print(total_all_files)
         for file in file_list:
-            if is_folder(file): total_folders += 1
+            if SafeFile.is_folder(file): total_folders += 1
             all_folders.log_item(file)
 
     print("Parsed %d files\t %d folders" % (total_all_files, total_folders))
-    return total_all_files, total_folders
 
 def main():
-    # Auth login (see also settings.yaml)
-
-    #todo: make sure owner is josh, not in trash
-    # todo Note: already verified this does not have duplicates
-
     # ******* This is the main run *********
-    run_with_recursive_look_up("1pEsKG9ZkRRYnZVbS3-JzQ1DNMA5_7h0O") # "active"
-    #run_with_query()
+    if run_short_debug: run_with_recursive_look_up(tester_id)
+    else: run_with_query()
 
     # Post processing
     all_folders.populate_all_paths()
@@ -472,9 +544,7 @@ def main():
         print_set("All files", all_file_set)
 
     pp(tracked_files)
-
-    should_write = True
-    if should_write:
+    if should_write_output:
         pickle_file = open("pickleoutput.db", "wb")
         pickle.dump(all_folders, pickle_file)
         pickle.dump(tracked_files, pickle_file)
@@ -482,7 +552,7 @@ def main():
 
         with open("csv_tracked_files.csv", "w") as csv_file:
             csv_columns = ['name', 'id', 'url', 'fullpath', 'non_user_owners', 'is_folder']
-            csv_columns.extend(list(FileProperties.get_default_properties().keys()))
+            csv_columns.extend(list(FileProperties.default_dict.keys()))
             writer = csv.DictWriter(csv_file, csv_columns)
             writer.writeheader()
             for file in tracked_files.values():
@@ -511,14 +581,14 @@ def main():
 
 
 if __name__ == "__main__":
+    # Auth login (see also settings.yaml)
     gauth = GoogleAuth()
     gauth.LocalWebserverAuth()
     drive = GoogleDrive(gauth)
 
     # Data accumulation
-    all_folders: FolderTracker = FolderTracker()   # Accumulates all folders during run
-    tracked_files: Dict[str, TrackedFile] = dict()           # Accumulates files of interest during run
-
-    all_file_set = []       # Only for intense debugging; not generally used
+    all_folders: FolderTracker = FolderTracker()    # Accumulates all folders during run
+    tracked_files: Dict[str, TrackedFile] = dict()  # Accumulates files of interest during run
+    all_file_set = []                               # Only for intense debugging; not generally used
 
     main()
