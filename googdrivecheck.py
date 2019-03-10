@@ -92,7 +92,11 @@ class TrackedFile:
         output_dict['name'] = self.file['title']
         output_dict['id'] = self.file['id']
         output_dict['url'] = self.file['alternateLink']
-        output_dict['fullpath'] = self.parent.full_path
+        if self.parent is None:
+            full_path = orphan_prefix + "/" + self.file['title']
+        else:
+            full_path = self.parent.full_path + "/" + self.file['title']
+        output_dict['fullpath'] = full_path
         output_dict['non_user_owners'] = self.non_user_owners
         output_dict['is_folder'] = is_folder(self.file)
         return output_dict
@@ -459,8 +463,8 @@ def main():
     # todo Note: already verified this does not have duplicates
 
     # ******* This is the main run *********
-    #run_with_recursive_look_up("1pEsKG9ZkRRYnZVbS3-JzQ1DNMA5_7h0O") # "active"
-    run_with_query()
+    run_with_recursive_look_up("1pEsKG9ZkRRYnZVbS3-JzQ1DNMA5_7h0O") # "active"
+    #run_with_query()
 
     # Post processing
     all_folders.populate_all_paths()
