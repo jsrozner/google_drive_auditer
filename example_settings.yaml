@@ -7,7 +7,7 @@ client_config:
 
 save_credentials: True
 save_credentials_backend: file
-save_credentials_file: saved_credentials.json
+save_credentials_file: saved_credentials.json # You need to have this file in this same directory
 
 get_refresh_token: True
 

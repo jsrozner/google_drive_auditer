@@ -2,4 +2,6 @@ settings.yaml
 *.json
 *.csv
 *.db
+venv/
+PyDrive/
 

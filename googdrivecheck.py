@@ -8,19 +8,13 @@ import yaml
 from pydrive.auth import GoogleAuth
 from pydrive.drive import GoogleDrive, GoogleDriveFile
 
-def lazy_property_folder_metadata(fn):
-    """Decorator for lazily fetching certain file metadata
-        For this program probably unnecessary, but it provides some nice protections
-    """
-    @property
-    def _lazy_property(self: Folder):
-        if not self._seen:
-            self._do_lookup_from_drive()
-        if self._metadata_lookup_failed:
-            print("Metadata lookup unsuccessful. Yield default. File: %s\t, metadata: %s\t, id: %s" %
-                  (self._name, fn.__name__, self.id))
-        return fn(self)
-    return _lazy_property
+# Basic run flags (todo - argparse)
+# Todo: add these to yaml config
+# Drive defines "My Drive" as root, but backed up computers are not captured.
+intense_debug = False   # Will print all files parsed
+run_short_test = False  # Run recurisvely over the tester_id folder / file provided in config, instead of
+# Over the whole API
+should_write_output = True
 
 ''' Brief readme Note:
     Logic flow is as follows: 
@@ -36,14 +30,19 @@ def lazy_property_folder_metadata(fn):
     To change files the API returns, modify the query functions called by main()
 '''
 
-# Basic run flags (todo - argparse)
-intense_debug = False   # Will print all files parsed
-run_short_test = True # Run recurisvely over the tester_id folder / file provided in config, instead of
-                        # Over the whole API
-should_write_output = True
-
-# Todo: add these to yaml config
-# Drive defines "My Drive" as root, but backed up computers are not captured.
+def lazy_property_folder_metadata(fn):
+    """Decorator for lazily fetching certain file metadata
+        For this program probably unnecessary, but it provides some nice protections
+    """
+    @property
+    def _lazy_property(self: Folder):
+        if not self._seen:
+            self._do_lookup_from_drive()
+        if self._metadata_lookup_failed:
+            print("Metadata lookup unsuccessful. Yield default. File: %s\t, metadata: %s\t, id: %s" %
+                  (self._name, fn.__name__, self.id))
+        return fn(self)
+    return _lazy_property
 
 # Util functions
 def print_file_note(description_string, file):
@@ -609,11 +608,13 @@ def run_with_query(query=""):
         q_string = "trashed=false"
         query = {'maxResults': max_results_api_setting, 'q': q_string}
 
+    print("Running API query with query:\n%s" % query)
+
     total_all_files = 0
     total_folders = 0
     for file_list in drive.ListFile(query):
         total_all_files += len(file_list)
-        print(total_all_files)
+        print("Total parsed files: %d" % total_all_files)
         for file in file_list:
             if SafeFile.is_folder(file): total_folders += 1
             all_folders.log_item(file)
@@ -622,7 +623,10 @@ def run_with_query(query=""):
 
 def main():
     # ******* This is the main run *********
-    if run_short_test: run_with_recursive_look_up(tester_id)
+    if run_short_test:
+        print("Running short test. If this isn't what you want, change the flag inside googdrivecheck.py")
+        print("Short test running with test_id (file or folder):\t %s" % tester_id)
+        run_with_recursive_look_up(tester_id)
     else: run_with_query()
 
     # Post processing
