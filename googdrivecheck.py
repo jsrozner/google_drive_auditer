@@ -13,6 +13,7 @@ from pydrive.drive import GoogleDrive, GoogleDriveFile
 # Drive defines "My Drive" as root, but backed up computers are not captured.
 intense_debug = False   # Will print all files parsed
 run_short_test = False  # Run recurisvely over the tester_id folder / file provided in config, instead of
+print_tracked_files_to_std_out = True
 # Over the whole API
 should_write_output = True
 
@@ -635,7 +636,12 @@ def main():
         print_set("All files", all_file_set)
 
     # Outputs
-    pp(tracked_files)
+    if print_tracked_files_to_std_out:
+        print("Now printing all tracked files. If you don't want this, change the flag")
+        pp(tracked_files)
+        print("Done printing all tracked files. These are also in the csv for tracked files."
+              "You can change what files get tracked in the code. If you don't want this ouptut"
+              "you can change the flag at the top of the file")
     if should_write_output:
         pickle_file = open("pickleoutput.db", "wb")
         pickle.dump(all_folders, pickle_file)

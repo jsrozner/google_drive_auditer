@@ -14,6 +14,9 @@ A program to query GoogleDrive API and output files that match certain criteria:
 - files with sharing to a group or domain (versus to user or to anyone-anyone is
   by link)
 - files with link sharing (those with "anyone" sharing type)
+- (If you want to change this, see the method
+  review_and_maybe_generate_tracked_file, which determines which files to track
+  and then output).
 
 The program will output a CSV summarizing
 - all of the above information
@@ -94,6 +97,9 @@ deleting your saved_credentials.json. The program should regenerate it.
 Ideally I would handle these in the python execution and just retry.
 
 7) CSV files will be generated in the same dir that you can then examine.
+
+8) The kinds of tracked files can be changed - see the method
+"review_and_maybe_generate_tracked_file". 
 
 /*** Hopeful work ***/
 I hope to add
