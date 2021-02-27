@@ -11,9 +11,11 @@ from pydrive.drive import GoogleDrive, GoogleDriveFile
 # Basic run flags (todo - argparse)
 # Todo: add these to yaml config
 # Drive defines "My Drive" as root, but backed up computers are not captured.
+from pydrive.files import GoogleDriveFileList
+
 intense_debug = False   # Will print all files parsed
 run_short_test = False  # Run recurisvely over the tester_id folder / file provided in config, instead of
-print_tracked_files_to_std_out = True
+print_tracked_files_to_std_out = False
 # Over the whole API
 should_write_output = True
 
@@ -31,6 +33,7 @@ should_write_output = True
     To change files the API returns, modify the query functions called by main()
 '''
 
+
 def lazy_property_folder_metadata(fn):
     """Decorator for lazily fetching certain file metadata
         For this program probably unnecessary, but it provides some nice protections
@@ -45,12 +48,24 @@ def lazy_property_folder_metadata(fn):
         return fn(self)
     return _lazy_property
 
-# Util functions
+
 def print_file_note(description_string, file):
+    """
+    Util functions
+    :param description_string: A description of the file
+    :param file: The file to be printed
+    """
     print("file_note: " + description_string +
           ("\n title: %s\t id:%s" % (SafeFile.safe_get(file, 'name'), SafeFile.safe_get(file, 'id'))))
-# This function is a little hacky because it's for debugging. We modify File inplace.
+
+
 def print_set(set_name, file_set: List):
+    """
+    This function is a little hacky because it's for debugging. We modify File inplace.
+
+    :param set_name:
+    :param file_set:
+    """
     print("** Printing set: %s" % set_name)
     for file in file_set:
         parent_folder_id = SafeFile.get_parent_id(file)
@@ -60,6 +75,7 @@ def print_set(set_name, file_set: List):
     file_set.sort(key=lambda x: x['fullpath'])
     pp([x['fullpath'] for x in file_set])
 
+
 class FileProperties:
     """Simple class to initialize a dictionary of the properties we will track
         Todo: this should return a copy to avoid problems (versus requiring user to copy)
@@ -68,25 +84,26 @@ class FileProperties:
         To add fields: 1) Add to default_dict, 2) Add method in SafeFile to access,
         3) Populate in either review_and_maybe_track or in _fetch_metadata()
     """
-    default_dict : Dict[str,bool] = {
+    default_dict: Dict[str, bool] = {
         # These are set in SafeFile.review_and_maybe_track()
-        "shared" : False,               # Whether file is shard
-        "spaces_photo" : False,         # Whether spaces contains "photos"
-        "spaces_app" : False,           # Whether spaces has app space
-        "trashed" : False,              # Whether trashed
-        "multi_owners" : False,         # Whether file has multiple owners (I've never seen this)
-        "non_auth_user_file" : False,   # Whether file is owned by another user (i.e. not the running user)
-        "is_orphan" : False,            # Whether file is not in one of the specified rootdirs
-        "has_multiple_parents" : False, # Whether file has multiple parent directories
-        "file_size" : 0,
+        "shared": False,               # Whether file is shard
+        "spaces_photo": False,         # Whether spaces contains "photos"
+        "spaces_app": False,           # Whether spaces has app space
+        "trashed": False,              # Whether trashed
+        "multi_owners": False,         # Whether file has multiple owners (I've never seen this)
+        "non_auth_user_file": False,   # Whether file is owned by another user (not the user running googledrivecheck)
+        "is_orphan": False,            # Whether file is not in one of the specified rootdirs
+        "has_multiple_parents": False, # Whether file has multiple parent directories
+        "file_size": 0,
 
         # These are set in TrackedFile._fetch_metadata() (populated only if shared = True)
         "has_more_than_one_permission" : False, # Whether file has more than one access permission. Equivalent to shared.
         "has_non_user_or_anyone_permission" : False,      # Whether file has a permission that is not use or anyone
-                                                          # As of this writing that is domain or group
+        # As of this writing that is domain or group
         "has_link_sharing" : False,                       # Equivalent to having an 'anyone' permission
         "users_groups_domains_with_access" : []           # Specific groups, users, domains with access
     }
+
 
 class SafeFile:
     """ Use this class to access fields in GoogleDriveFile, in case API ever changes
@@ -130,6 +147,7 @@ class SafeFile:
                 pp(file)
             attr_value = None
         return attr_value
+
     @classmethod
     def get_parent_id(cls, file: GoogleDriveFile) -> Optional[str]:
         """ Get the first parent's ID"""
@@ -141,13 +159,16 @@ class SafeFile:
         if(len(parent_array)) > 1:
             print("** more than one parent")
         return parent_array[0]['id']
+
     @classmethod
     def is_folder(cls, file: GoogleDriveFile) -> bool:
         return SafeFile.safe_get(file, 'mimeType') == "application/vnd.google-apps.folder"
+
     @classmethod
     def is_root_folder(cls, file:GoogleDriveFile) -> bool:
         return SafeFile.safe_get(file, 'name') in rootdirs and \
                len(SafeFile.safe_get(file, '_safe_parents')) == 0
+
     @classmethod
     def get_full_path(cls, file:GoogleDriveFile, parent_folder: 'Folder') -> str:
         file_name = SafeFile.safe_get(file, 'name')
@@ -156,26 +177,31 @@ class SafeFile:
 
         parent_folder_path = parent_folder.full_path
         return parent_folder_path + "/" + file_name
+
     @classmethod
     def get_all_owners(cls, file:GoogleDriveFile) -> List[str]:
         owners = SafeFile.safe_get(file, 'owners')
         return list(x['displayName'] for x in owners)
+
     @classmethod
     def has_link_sharing(cls, file:GoogleDriveFile) -> bool:
         if "anyone" in SafeFile.non_user_permissions_type_list(file):
             return True
         return False
+
     @classmethod
     def non_user_permissions_type_list(cls, file:GoogleDriveFile) -> List[str]:
         permissions = SafeFile.safe_get(file, 'permissions')
         return list(perm['type']
                     for perm in permissions if perm['type'] not in ["user"])
+
     @classmethod
     # Todo: verify domain works
     def special_permissions_list(cls, file:GoogleDriveFile) -> List[List[str]]:
         permissions = SafeFile.safe_get(file, 'permissions')
         return list([perm['type'],perm.get('emailAddress')]
                     for perm in permissions if perm['type'] not in ["user", "anyone"])
+
     @classmethod
     def users_groups_domains_with_access(cls, file:GoogleDriveFile) -> List[str]:
         permissions = SafeFile.safe_get(file, 'permissions')
@@ -241,6 +267,7 @@ class TrackedFile:
         After being initialized, everything can be safely accessed. Generally set once and then read upon output
         Fetches sharing metadata only if needed
     """
+    # Todo: complete the docstring of all methods
     def __init__(self, file: GoogleDriveFile, properties_dictionary: dict, parent_folder: 'Folder'):
         self.file = file
         self.props = properties_dictionary
@@ -322,10 +349,13 @@ class TrackedFile:
         if has_link_sharing:
             assert(has_more_than_one_permission and has_non_user_or_anyone_permission and is_shared)
 
-# Represents an individual folder (a file type). Basically behaves like a tree node
-# with some added special features so that we can lazily populate data as the
-# API returns. We don't require any guarantees on the order of returned items.
+
 class Folder:
+    """
+    Represents an individual folder (a file type). Basically behaves like a tree node
+    with some added special features so that we can lazily populate data as the
+    API returns. We don't require any guarantees on the order of returned items.
+    """
     def __repr__(self):
         return " ".join("{}={!r}".format(k, v) for k, v in self.__dict__.items())
 
@@ -340,9 +370,9 @@ class Folder:
 
         # Whether file has been explicitly processed (i.e. returned from the API vs just seen as a parent node)
         self._seen = False      # Set to true when parsed; Indicates whether this folder has been
-                                # Set by populate_fields_from_file
+        # Set by populate_fields_from_file
         self._metadata_lookup_failed = False    # If we tried a fetch and failed. We don't keep trying.
-                                                # If this is true, self._seen will also be true.
+        # If this is true, self._seen will also be true.
 
         # Properties (looked up lazily and protected by property method). Default values below.
         # Guarded by self._seen
@@ -577,9 +607,14 @@ class FolderTracker:
         for folder in self.data.values():
             _ = folder.full_path
 
-# Run only over a given folder and its children
-# May be slower than a normal query, since each child folder will issue a new API call (vs calling with max 500)
+
 def run_with_recursive_look_up(starting_id):
+    """
+    Run only over a given folder and its children. It may be slower than a normal query, since each
+     child folder will issue a new API call (vs calling with max 500)
+
+    :param starting_id:
+    """
     todo_stack = [starting_id]
     total_all_files = 0
     total_folders = 0
@@ -600,9 +635,14 @@ def run_with_recursive_look_up(starting_id):
 
     print("Parsed %d files\t %d folders" % (total_all_files, total_folders))
 
-# Normal run - Defaults to all files, omits trash, limits to 1000 results per API call
-# Goes until all drive files accessible to user are processed
+
 def run_with_query(query=""):
+    """
+    Normal run - Defaults to all files, omits trash, limits to 1000 results per API call
+    Goes until all drive files accessible to user are processed
+
+    :param query:
+    """
     # Todo: Consider augmenting query with owner = user
     # Note files will never appear multiple times (verified previously)
     if query == "":
@@ -617,13 +657,17 @@ def run_with_query(query=""):
         total_all_files += len(file_list)
         print("Total parsed files: %d" % total_all_files)
         for file in file_list:
-            if SafeFile.is_folder(file): total_folders += 1
+            if SafeFile.is_folder(file):
+                total_folders += 1
             all_folders.log_item(file)
 
     print("Parsed %d files\t %d folders" % (total_all_files, total_folders))
 
+
 def main():
-    # ******* This is the main run *********
+    """
+      This is the main run
+    """
     if run_short_test:
         print("Running short test. If this isn't what you want, change the flag inside googdrivecheck.py")
         print("Short test running with test_id (file or folder):\t %s" % tester_id)
@@ -631,7 +675,9 @@ def main():
     else: run_with_query()
 
     # Post processing
-    all_folders.populate_all_paths()    # Recursively populate full paths. todo: This could be moved to "should_write_output"
+    # Recursively populate full paths. todo: This could be moved to "should_write_output"
+    all_folders.populate_all_paths()
+
     if intense_debug:
         print_set("All files", all_file_set)
 
@@ -658,27 +704,31 @@ def main():
                 writer.writerow(file.tracked_file_csv_info())
 
         # For writing details of folders
-        folders_list = list(all_folders.data.values())
+        folders_list: List[Folder] = list(all_folders.data.values())
         for f in folders_list:
-            f.traverse_all_children()      # Recursively go down the tree from each folder
-                                           # To populate depth, total size, and total children count
+            # Recursively go down the tree from each folder
+            # to populate depth, total size, and total children count
+            f.traverse_all_children()
+
         folders_list.sort(key=lambda x: x.full_path)
 
         with open("csv_folder_info.csv", "w") as csv_file:
-            csv_columns = ['folder_name', 'id', 'url','fullpath', 'num_children', 'total_size', 'owners']
+            csv_columns = [
+                'folder_name', 'id', 'url', 'fullpath', 'num_children', 'total_size', 'owners'
+            ]
             writer = csv.DictWriter(csv_file, csv_columns)
             writer.writeheader()
             for folder in folders_list:
-                #todo: consider only counting certain folders
-                #todo: move this logic into folder (or move the trackedfile logic out of trackedFile)
+                # todo: consider only counting certain folders
+                # todo: move this logic into folder (or move the trackedfile logic off trackedFile)
                 row = {
-                    'folder_name' : folder.name,
-                    'id' : folder.id,
-                    'url' : folder.url,
-                    'fullpath' : folder.full_path,
-                    'num_children' : folder.all_children_count,
-                    'total_size' : folder.size_all_children,
-                    'owners' : folder.owners
+                    'folder_name': folder.name,
+                    'id': folder.id,
+                    'url': folder.url,
+                    'fullpath': folder.full_path,
+                    'num_children': folder.all_children_count,
+                    'total_size': folder.size_all_children,
+                    'owners': folder.owners
                 }
                 writer.writerow(row)
 
@@ -690,21 +740,24 @@ if __name__ == "__main__":
     drive = GoogleDrive(gauth)
 
     # Parse yaml
-    config = yaml.load(open('settings.yaml'))
+    config = yaml.safe_load(open('settings.yaml'))
     my_user_name = config['my_user_name']
     rootdirs = config['rootdirs']
     orphan_prefix = config['orphan_prefix']
     name_for_non_seeable_folders = config["name_for_non_seeable_folders"]
     tester_id = config['tester_id']
     max_results_api_setting = config['max_results_api_setting']
-    max_metadata_fetch_try_count = config['max_metadata_fetch_try_count']          # Generally fetch never fails
+    max_metadata_fetch_try_count = config['max_metadata_fetch_try_count']  # Generally fetch never fails
     log_file_if_size_greater_than_limit = float(config['log_file_if_size_greater_than_limit']) # (100 MB)
 
-    # Data accumulation
-    all_folders: FolderTracker = FolderTracker()    # Accumulates all folders during run.
-                                                    # Also generates tracked files
-    tracked_files: Dict[str, TrackedFile] = dict()  # Accumulates files of interest during run
-                                                    # Populated in FolderTracker.log_item()
-    all_file_set = []                               # Only for intense debugging; not generally used
+    # DATA ACCUMULATION
+    # Accumulates all folders during run. Also generates tracked files
+    all_folders: FolderTracker = FolderTracker()
+
+    # Accumulates files of interest during run Populated in FolderTracker.log_item()
+    tracked_files: Dict[str, TrackedFile] = dict()
+
+    # Only for intense debugging; not generally used
+    all_file_set: List[GoogleDriveFileList] = []
 
     main()
