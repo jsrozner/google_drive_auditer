@@ -2,42 +2,68 @@
 client_config_backend: settings # Don't change
 
 client_config:
-  client_id:      # Todo (2 lines): From your client_secret.json, 
-  client_secret:  # which you will download from google API system. See README
+  client_id:      # Todo (2 lines): From your client_secret.json,
+  client_secret:  "client_secrets.json" # which you will download from google API system. See README
 
 save_credentials: True                        # Don't change these (unless you don't want to save credentials
 save_credentials_backend: file                # which I have not tested)
-save_credentials_file: saved_credentials.json # Don't chnage: This file will be created when you run. 
-                                              # It saves state so you can continkue to query.
+save_credentials_file: saved_credentials.json # Don't chnage: This file will be created when you run.
+# It saves state so you can continkue to query.
 
 get_refresh_token: True   # Don't change
+oauth_scope:
+  # Drive API v3 Scopes - This restricts the permissions to your Google Drive files
+  # The drive.metadata.readonly scope only allows to reed the files permissions, name and other
+  # data, but does not allow to read the files content.
+  # Uncomment the scopes you want to use.
+  - https://www.googleapis.com/auth/drive.metadata.readonly  # View metadata for files in your Google Drive
+  #- https://www.googleapis.com/auth/drive  # See, edit, create, and delete all of your Google Drive files
+  #- https://www.googleapis.com/auth/drive.appdata  # View and manage its own configuration data in your Google Drive
+  #- https://www.googleapis.com/auth/drive.file  # View and manage Google Drive files and folders that you have opened or created with this app
+  #- https://www.googleapis.com/auth/drive.metadata  # View and manage metadata of files in your Google Drive
+  #- https://www.googleapis.com/auth/drive.photos.readonly  # View the photos, videos and albums in your Google Photos
+  #- https://www.googleapis.com/auth/drive.readonly  # See and download all your Google Drive files
+  #- https://www.googleapis.com/auth/drive.scripts  # Modify your Google Apps Script scripts' behavior
 
 ###############################
 # Config for googledrivecheck #
 # #############################
 
 # Personal settings:
-my_user_name:  "John Smith"     # Todo: This is the google user name for the user who is running the program
-                                # This is how the program identifies files not owned by the running user
-rootdirs: ["My Drive", "My Computer"]       # Todo: "My Computer" is an example -- this occurs if you backup
-                                            # your local documents or other folders on your computer outside
-                                            # your drive.
-# For testing
-tester_id: "enter_folder_or_file_id_as string"   # A file ID from which to recursively parse.
-                                                 # to use Also set the "run_short_test" flag
-                                                 # Not necessary unless you're
-                                                 # debugging / want to check a
-                                                 # certain file
+# my_user_name is the name and last name for the user who is running the program, as it appear in
+# your Google profile. This is not the username (email address) you use to log in.
+# This is how the program identifies files not owned by the running user
+my_user_name:  "John Smith"
 
+# rootdirs are athe directories in your Google Drive.
+# e.g: "My Computer" this occurs if you backup your local documents or other folders on your
+# computer outside your drive.
+rootdirs: ["My Drive", "My Computer"]
+
+# tester_id is only used for testing. This is a file ID from which to recursively parse.
+# To use tester_id, also set the "run_short_test" flag.
+# tester_id is not needed unless you're debugging / want to check a certain file
+tester_id: "enter_folder_or_file_id_as string"
+
+# ------------------------------------------------- #
 # Some sensible defaults. No need to change these
-orphan_prefix: "0_orphan"                   # Prefix for outputted fullpaths for orphan files
-name_for_non_seeable_folders: "no_name"     # Name for any folders where metadata lookup fails
+# ------------------------------------------------- #
 
-max_results_api_setting: 1000               # Default value for max results per API request (program executes
-                                            # requests until all files are returned
-max_metadata_fetch_try_count: 5             # How many times to try lookup before giving up.
-                                            # Generally fetch never fails
+# orphan_prefix is the Prefix for outputted fullpaths for orphan files
+orphan_prefix: "0_orphan"
 
+# name_for_non_seeable_folders is the Name for any folders where metadata lookup fails
+name_for_non_seeable_folders: "no_name"
+
+# max_results_api_setting is a default value for max results per API request.
+# googledrivecheck executes requests until all files are returned
+max_results_api_setting: 1000
+
+# max_metadata_fetch_try_count controls how many times to try lookup before giving up.
+# Generally fetch never fails
+max_metadata_fetch_try_count: 5
+
+# ------------------------------------------------- #
 # Specific query settings (i.e. what files to track). Also no need to change.
-log_file_if_size_greater_than_limit: 1e8 # (100 MB)
-
+# ------------------------------------------------- #
+log_file_if_size_greater_than_limit: 1 # (100 MB)
