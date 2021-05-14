@@ -4,7 +4,7 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-PyYAML = "==5.3.1"
+PyYAML = "==5.4"
 future = "==0.18.2"
 pprint36 = "==3.9.0.2"
 typing = "==3.7.4.3"
