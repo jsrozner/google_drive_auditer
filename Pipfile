@@ -5,7 +5,7 @@ name = "pypi"
 
 [packages]
 PyYAML = "==5.4"
-future = "==0.18.2"
+future = "==0.18.3"
 pprint36 = "==3.9.0.2"
 typing = "==3.7.4.3"
 csv23 = "==0.3.2"
